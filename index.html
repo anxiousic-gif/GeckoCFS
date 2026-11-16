@@ -78,13 +78,19 @@
             <span class="hint">Mondrian refresh rate</span>
         </label>
 
+        <label>
+            <span>Gecko ramp <span id="ramp-val" class="value">0.75 s</span></span>
+            <input type="range" id="ramp-slider" min="0" max="1" step="0.05" value="0.75">
+            <span class="hint">Fade in / fade out time. 0 = abrupt on/off</span>
+        </label>
+
         <div style="border-top:1px solid #333; padding-top:8px; margin-top:2px;">
             <div style="font-size:12px; color:#aaa; margin-bottom:4px;">Dominant eye (mask)</div>
             <div id="vr-panel">
                 <button id="eye-left" class="active">👁 LEFT eye – mask</button>
                 <button id="eye-right">👁 RIGHT eye – mask</button>
             </div>
-            <div class="hint" style="margin-top:6px;">Gecko blinks 2s on / 2s off on the other eye.</div>
+            <div class="hint" style="margin-top:6px;">Gecko fades in and out, 2s on / 2s off, on the other eye.</div>
         </div>
     </div>
 
@@ -173,6 +179,10 @@
         const GECKO_OFF_SECONDS = 2.0;
         let geckoVisible = false;
         let geckoTimer   = 0;
+
+        // Gecko contrast ramp: opacity fades 0 -> set opacity at the start of each ON phase
+        // and back to 0 at the end. Ramp length is adjustable (max = half the ON time).
+        let geckoRampSeconds = 0.75;
 
         const SWAP_EYES = false;
 
@@ -395,6 +405,16 @@
                 setGeckoThreshold(t);
                 if (!renderer.xr.isPresenting) {
                     setHud(`Background cutoff = ${t}`);
+                }
+            });
+            const rampSlider    = document.getElementById('ramp-slider');
+            const rampVal       = document.getElementById('ramp-val');
+            rampSlider.addEventListener('input', (e) => {
+                const r = parseFloat(e.target.value);
+                geckoRampSeconds = r;
+                rampVal.textContent = r.toFixed(2).replace(/0$/, '') + ' s';
+                if (!renderer.xr.isPresenting) {
+                    setHud(`Gecko ramp = ${r.toFixed(2)} s`);
                 }
             });
             const eyeLeftBtn    = document.getElementById('eye-left');
@@ -829,6 +849,21 @@
                 geckoTimer = 0;
                 geckoVisible = !geckoVisible;
                 lastLayerSignature = '';
+            }
+
+            // Gecko contrast ramp (linear fade in / fade out inside the ON phase)
+            if (geckoVisible) {
+                const onMs   = GECKO_ON_SECONDS * 1000;
+                const rampMs = Math.min(geckoRampSeconds * 1000, onMs / 2);
+                let env = 1;
+                if (rampMs > 0) {
+                    if (geckoTimer < rampMs) {
+                        env = geckoTimer / rampMs;
+                    } else if (geckoTimer > onMs - rampMs) {
+                        env = (onMs - geckoTimer) / rampMs;
+                    }
+                }
+                geckoMaterial.opacity = currentOpacity * THREE.MathUtils.clamp(env, 0, 1);
             }
 
             // Mondrian flash
