@@ -1,0 +1,18 @@
+Parameter: Value
+Platform: Meta Quest 3, WebXR immersive-vr, three.js r160
+Headset render scale:	1.5× framebuffer scale
+Panorama:	Equirectangular image on a sphere (radius 50, 64×32 segments), 45° yaw steps with [ ] keys
+Stimulus distance:	2.7 m in front of the viewer
+Stimulus position:	~2.9° left and ~4.6° below straight ahead
+Gecko size: (scale 1.0×)	0.18 × 0.11 m, about 3.8° × 2.3° visual angle (scalable 0.5–2.5×)
+Mask size:	1.8× the gecko, about 6.9° × 4.2° at 1.0×
+Mask composition:	100–150 rectangles per refresh, made by recursively splitting the largest rectangle (split point 25–75%)
+Mask colors (probability):	White 40%, black 22%, red 12%, blue 10%, yellow 9%, green 7%
+Mask flash rate:	6 Hz default (adjustable 1–20 Hz)
+Gecko opacity:	0.30 default (adjustable 0.1–1.0)
+Gecko blur:	3 px default (adjustable 0–20 px)
+Gecko background removal:	Luminance cutoff 200 (adjustable 100–255), with a 30-level soft edge
+Gecko tint:	#e8e2d8
+Gecko timing:	2 s on / 2 s off, starting visible at session start
+Dominant-eye mask:	Left or right, set by button
+Gecko texture:	Resized to max 1024 px, mipmapped with anisotropic filtering
