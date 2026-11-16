@@ -10,7 +10,7 @@ CFS is a binocular rivalry technique. One eye (the dominant eye) sees a high-con
 
 - **Panorama:** a 360° equirectangular image (`panorama.jpg`) is shown identically to both eyes, which helps the two eyes fuse the scene.
 - **Mask:** a Mondrian of colored rectangles is shown to the dominant eye only (left by default, switchable to right).
-- **Target:** the gecko is shown to the other eye only and blinks 2 s on / 2 s off.
+- **Target:** the gecko is shown to the other eye only, 2 s on / 2 s off. Within each "on" period its opacity ramps up linearly from 0 to the set value and back down to 0 (default ramp 0.75 s each way), rather than switching on and off abruptly.
 - **Head-locked stimuli:** the mask and gecko stay in the same place in the field of view when the head moves.
 - **Eye separation:** done with three.js render layers (panorama on both eyes, mask on one eye, gecko on the other).
 
@@ -46,6 +46,7 @@ The control panel is on the web page in the Quest Browser, so set the values **b
 | Gecko blur | 3 px | 0–20 px |
 | Background cutoff | 200 | 100–255 |
 | Flash rate (mask refresh) | 6 Hz | 1–20 Hz |
+| Gecko ramp (fade in / fade out) | 0.75 s | 0–1 s (0 = abrupt on/off) |
 | Dominant eye (mask) | Left | Left / Right |
 
 Optional: with a Bluetooth keyboard connected to the Quest, press `[` and `]` to rotate the panorama in 45° steps (useful for choosing the start direction).
@@ -68,7 +69,8 @@ Optional: with a Bluetooth keyboard connected to the Quest, press `[` and `]` to
 | Gecko blur | 3 px default (adjustable 0–20 px) |
 | Gecko background removal | Luminance cutoff 200 (adjustable 100–255), with a 30-level soft edge |
 | Gecko tint | #e8e2d8 |
-| Gecko timing | 2 s on / 2 s off, starting visible at session start |
+| Gecko timing | 2 s on / 2 s off, starting at session start |
+| Gecko ramp | Linear opacity fade in and out within each "on" period, 0.75 s default (adjustable 0–1 s) |
 | Dominant-eye mask | Left or right, set by button |
 | Gecko texture | Resized to max 1024 px, mipmapped with anisotropic filtering |
 
@@ -77,7 +79,7 @@ Optional: with a Bluetooth keyboard connected to the Quest, press `[` and `]` to
 - The sliders are on the web page, so they must be set before entering VR.
 - The mask refreshes once per rendered frame, so the true flash rate is tied to the headset's refresh rate (72/90/120 Hz).
 - The default flash rate (6 Hz) is lower than the roughly 10 Hz usually used in CFS studies. Set it to 10 Hz to match the standard.
-- The gecko switches on and off abruptly at a fixed opacity rather than ramping its contrast.
+- The ramp is a simple linear opacity fade, not a calibrated contrast ramp, and the peak opacity is set by hand rather than measured per participant.
 - There is no response collection yet (no detection or breakthrough-time task).
 - There is no luminance or color calibration of the headset display.
 
