@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meta Quest 3 CFS Panorama – intermittent gecko</title>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background-color: #111; font-family: sans-serif; color: white; text-align: center; }
+        #vr-button { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); padding: 12px 24px; font-size: 18px; background: #0078d4; color: white; border: none; border-radius: 4px; cursor: pointer; z-index: 999; }
+        #vr-button:disabled { background: #555; cursor: not-allowed; }
+        #hud { position: absolute; top: 10px; left: 10px; font-size: 13px; background: rgba(0,0,0,0.6); padding: 10px; border-radius: 4px; z-index: 999; text-align: left; max-width: 380px; line-height: 1.5; }
+        #controls {
+            position: absolute; bottom: 20px; left: 20px; z-index: 1000;
+            background: rgba(20,20,20,0.85); padding: 16px 20px; border-radius: 12px;
+            display: flex; flex-direction: column; gap: 12px;
+            backdrop-filter: blur(8px); border: 1px solid #444;
+            box-shadow: 0 6px 18px rgba(0,0,0,0.6);
+            font-size: 14px; width: 260px; text-align: left;
+        }
+        #controls label { display: flex; flex-direction: column; gap: 4px; color: #ddd; }
+        #controls input[type="range"] { width: 100%; accent-color: #0078d4; }
+        #controls button {
+            background: #0078d4; color: white; border: none; padding: 8px 12px;
+            border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer;
+            transition: background 0.15s;
+        }
+        #controls button:hover { background: #1a8ae8; }
+        #controls .value { color: #9cf; font-weight: 600; }
+        #controls .hint { font-size: 11px; color: #888; margin-top: 2px; }
+        #vr-panel { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+        #vr-panel button { background: #2a2a2a; border: 1px solid #555; }
+        #vr-panel button:hover { background: #3a3a3a; }
+        #vr-panel button.active { background: #0078d4; border-color: #0078d4; }
+        @media (max-width: 600px) { #controls { width: 200px; padding: 12px; font-size: 12px; } }
+    </style>
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+      }
+    }
+    </script>
+</head>
+<body>
+
+    <button id="vr-button">ENTER VR EXPERIMENT</button>
+    <div id="hud">Status: initializing…</div>
+
+    <div id="controls">
+        <div style="font-weight:700; letter-spacing:0.5px; color:#fff;">⚙️ CFS controls</div>
+
+        <label>
+            <span>Gecko opacity <span id="opacity-val" class="value">0.30</span></span>
+            <input type="range" id="opacity-slider" min="0.1" max="1.0" step="0.05" value="0.30">
+        </label>
+
+        <label>
+            <span>Stimulus scale <span id="scale-val" class="value">1.00×</span></span>
+            <input type="range" id="scale-slider" min="0.5" max="2.5" step="0.05" value="1.0">
+            <span class="hint">Gecko + Mondrian</span>
+        </label>
+
+        <label>
+            <span>Gecko blur <span id="blur-val" class="value">3 px</span></span>
+            <input type="range" id="blur-slider" min="0" max="20" step="0.5" value="3">
+            <span class="hint">0 = sharp, higher = softer</span>
+        </label>
+
+        <label>
+            <span>Background cutoff <span id="cutoff-val" class="value">200</span></span>
+            <input type="range" id="cutoff-slider" min="100" max="255" step="5" value="200">
+            <span class="hint">Lower = removes more of the photo's light background</span>
+        </label>
+
+        <label>
+            <span>Flash rate <span id="flash-val" class="value">6 Hz</span></span>
+            <input type="range" id="flash-slider" min="1" max="20" step="1" value="6">
+            <span class="hint">Mondrian refresh rate</span>
+        </label>
+
+        <div style="border-top:1px solid #333; padding-top:8px; margin-top:2px;">
+            <div style="font-size:12px; color:#aaa; margin-bottom:4px;">Dominant eye (mask)</div>
+            <div id="vr-panel">
+                <button id="eye-left" class="active">👁 LEFT eye – mask</button>
+                <button id="eye-right">👁 RIGHT eye – mask</button>
+            </div>
+            <div class="hint" style="margin-top:6px;">Gecko blinks 2s on / 2s off on the other eye.</div>
+        </div>
+    </div>
+
+    <!-- Diagnostics: shows errors in the status box if the main script fails to start -->
+    <script>
+        (function () {
+            function show(msg) {
+                var h = document.getElementById('hud');
+                if (h) h.textContent = 'ERROR: ' + msg;
+            }
+            window.addEventListener('error', function (e) {
+                show((e.message || 'script error') +
+                     (e.filename ? ' @ ' + e.filename.split('/').pop() + ':' + e.lineno : ''));
+            });
+            window.addEventListener('unhandledrejection', function (e) {
+                show(String((e.reason && e.reason.message) || e.reason));
+            });
+            setTimeout(function () {
+                var h = document.getElementById('hud');
+                if (h && /initializing/.test(h.textContent)) {
+                    h.textContent = 'Still initializing after 6s: the main script did not start. ' +
+                        'Most likely three.js failed to load from unpkg.com, or there is a JS error (check the browser console).';
+                }
+            }, 6000);
+        })();
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // ================================================================
+        // FILES — local, same-origin
+        // ================================================================
+        const PANORAMA_FILE = './panorama.jpg';
+        const GECKO_FILES   = ['./gecko.png', './gecko.jpg'];
+
+        // ---------------------------------------------------------------
+        // Layers
+        // ---------------------------------------------------------------
+        const LAYER_PANORAMA = 0;
+        const LAYER_GECKO    = 1;
+        const LAYER_MASK     = 2;
+
+        // ---------------------------------------------------------------
+        // Placement
+        // ---------------------------------------------------------------
+        const CURTAIN_YAW   = -0.05;
+        const CURTAIN_PITCH = -0.08;
+        const WALL_DISTANCE = 2.7;
+        const EYE_HEIGHT    = 1.6;
+
+        // Panorama start orientation (radians).
+        // The original working code used Math.PI and started at the door.
+        // To face the OPPOSITE side, add Math.PI to that value -> 2π ≡ 0.
+        // If that still shows the door, press the [ ] keys at runtime to cycle
+        // and watch the HUD to find the correct value for your panorama.
+        let PANORAMA_YAW = Math.PI + Math.PI; // 2π ≡ 0 (opposite of original)
+
+        const YAW_STEP = Math.PI / 4; // 45° per key press
+
+        // ---------------------------------------------------------------
+        // Stimulus sizes
+        // ---------------------------------------------------------------
+        const BASE_GECKO_WIDTH  = 0.18;
+        const BASE_GECKO_HEIGHT = 0.11;
+        const BASE_MASK_SCALE   = 1.8;
+        const RECTS_PER_UPDATE_MIN = 100;
+        const RECTS_PER_UPDATE_MAX = 150;
+
+        // ---------------------------------------------------------------
+        // Appearance / suppression
+        // ---------------------------------------------------------------
+        const GECKO_TINT     = new THREE.Color(0xe8e2d8);
+        let geckoBlurPx = 3;          // adjustable via slider
+        let geckoSourceCanvas = null; // thresholded (un-blurred) gecko, kept for re-blurring
+        let geckoUsesFallback = false;
+        let geckoRawCanvas = null;    // original gecko photo, before background removal
+        let geckoThreshold = 200;     // pixels brighter than this become transparent
+        const DEFAULT_GECKO_OPACITY = 0.30;
+        const SHADOW_OPACITY = 0; // was 0.05: the faint dark rectangle behind the gecko
+
+        let flashHz = 6;
+
+        // Gecko blink timing
+        const GECKO_ON_SECONDS  = 2.0;
+        const GECKO_OFF_SECONDS = 2.0;
+        let geckoVisible = false;
+        let geckoTimer   = 0;
+
+        const SWAP_EYES = false;
+
+        // Which eye holds the Mondrian (always on)
+        let MASK_EYE = 'left';
+
+        // ---------------------------------------------------------------
+        // Globals
+        // ---------------------------------------------------------------
+        let scene, camera, renderer;
+        let vrButton, hud;
+
+        let geckoGroup, maskGroup;
+        let geckoMesh, geckoMaterial;
+        let maskPool = [];
+        const maskGeometry = new THREE.PlaneGeometry(1, 1);
+
+        let panoramaMesh = null;
+
+        let flashAccumulator = 0;
+        let lastFrameTime = 0;
+        let lastLayerSignature = '';
+
+        let currentOpacity = DEFAULT_GECKO_OPACITY;
+        let currentScale   = 1.0;
+        let currentGeckoW  = BASE_GECKO_WIDTH;
+        let currentGeckoH  = BASE_GECKO_HEIGHT;
+
+        // ---------------------------------------------------------------
+        // Mondrian palette
+        // ---------------------------------------------------------------
+        const MONDRIAN_COLORS = [
+            { color: new THREE.Color(0xffffff), weight: 0.40 },
+            { color: new THREE.Color(0x000000), weight: 0.22 },
+            { color: new THREE.Color(0xff0000), weight: 0.12 },
+            { color: new THREE.Color(0x0000ff), weight: 0.10 },
+            { color: new THREE.Color(0xffff00), weight: 0.09 },
+            { color: new THREE.Color(0x00ff00), weight: 0.07 }
+        ];
+
+        init();
+
+        // ---------------------------------------------------------------
+        // Init
+        // ---------------------------------------------------------------
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x222222);
+
+            camera = new THREE.PerspectiveCamera(
+                70, window.innerWidth / window.innerHeight, 0.05, 200
+            );
+            camera.position.set(0, EYE_HEIGHT, 0);
+            camera.layers.enable(LAYER_PANORAMA);
+            scene.add(camera);
+
+            // --- HEAD-LOCKED STIMULUS ---
+            geckoGroup = new THREE.Group();
+            geckoGroup.position.set(
+                Math.sin(CURTAIN_YAW) * WALL_DISTANCE,
+                CURTAIN_PITCH * WALL_DISTANCE,
+                -Math.cos(CURTAIN_YAW) * WALL_DISTANCE
+            );
+            geckoGroup.rotation.set(0, CURTAIN_YAW, 0);
+            camera.add(geckoGroup);
+
+            maskGroup = new THREE.Group();
+            maskGroup.position.copy(geckoGroup.position);
+            maskGroup.quaternion.copy(geckoGroup.quaternion);
+            camera.add(maskGroup);
+
+            // Soft shadow
+            const shadowMaterial = new THREE.MeshBasicMaterial({
+                color: 0x000000,
+                transparent: true,
+                opacity: SHADOW_OPACITY,
+                depthWrite: false,
+                depthTest: true,
+                toneMapped: false
+            });
+            const shadowMesh = new THREE.Mesh(
+                new THREE.PlaneGeometry(currentGeckoW, currentGeckoH),
+                shadowMaterial
+            );
+            shadowMesh.scale.set(1.05, 0.95, 1.0);
+            shadowMesh.position.z = -0.001;
+            shadowMesh.layers.set(LAYER_GECKO);
+            shadowMesh.renderOrder = 9;
+            shadowMesh.frustumCulled = false;
+            shadowMesh.name = 'shadow';
+            geckoGroup.add(shadowMesh);
+
+            // Gecko
+            geckoMaterial = new THREE.MeshBasicMaterial({
+                transparent: true,
+                opacity: currentOpacity,
+                color: GECKO_TINT.clone(),
+                depthWrite: false,
+                depthTest: true,
+                toneMapped: true,
+                side: THREE.DoubleSide
+            });
+
+            geckoMesh = new THREE.Mesh(
+                new THREE.PlaneGeometry(currentGeckoW, currentGeckoH),
+                geckoMaterial
+            );
+            geckoMesh.position.z = 0.001;
+            geckoMesh.layers.set(LAYER_GECKO);
+            geckoMesh.renderOrder = 10;
+            geckoMesh.frustumCulled = false;
+            geckoMesh.name = 'gecko';
+            geckoGroup.add(geckoMesh);
+
+            loadGeckoTexture(
+                GECKO_FILES,
+                (tex) => {
+                    geckoMaterial.map = tex;
+                    geckoMaterial.needsUpdate = true;
+                    setHud('Gecko texture loaded ✓');
+                },
+                () => {
+                    geckoMaterial.map = makeFallbackGeckoTexture();
+                    geckoMaterial.needsUpdate = true;
+                    setHud('⚠ Gecko fallback used');
+                }
+            );
+
+            buildMaskPool();
+            refreshMondrian();
+
+            loadPanorama();
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            // Render the headset view at higher resolution (1.0 = default). Lower this if frame rate drops.
+            renderer.xr.setFramebufferScaleFactor(1.5);
+            document.body.appendChild(renderer.domElement);
+
+            vrButton = document.getElementById('vr-button');
+            hud      = document.getElementById('hud');
+
+            vrButton.addEventListener('click', onEnterVR);
+
+            if ('xr' in navigator) {
+                navigator.xr.isSessionSupported('immersive-vr')
+                    .then((supported) => {
+                        if (supported) {
+                            setHud('WebXR available ✓ — click ENTER VR.');
+                        } else {
+                            vrButton.textContent = 'VR not available';
+                            vrButton.disabled = true;
+                        }
+                    })
+                    .catch(() => {
+                        vrButton.textContent = 'VR not available';
+                        vrButton.disabled = true;
+                    });
+            } else {
+                vrButton.textContent = 'VR not available';
+                vrButton.disabled = true;
+            }
+
+            renderer.xr.addEventListener('sessionstart', onXRSessionStart);
+            renderer.xr.addEventListener('sessionend',   onXRSessionEnd);
+
+            renderer.setAnimationLoop(render);
+            window.addEventListener('resize', onResize);
+
+            // Runtime yaw tuning: [ ] keys step 45°
+            window.addEventListener('keydown', (e) => {
+                if (e.key === ']') {
+                    PANORAMA_YAW += YAW_STEP;
+                    applyPanoramaYaw();
+                } else if (e.key === '[') {
+                    PANORAMA_YAW -= YAW_STEP;
+                    applyPanoramaYaw();
+                }
+            });
+
+            setupControls();
+        }
+
+        function applyPanoramaYaw() {
+            if (panoramaMesh) {
+                panoramaMesh.rotation.y = PANORAMA_YAW;
+            }
+            const deg = (PANORAMA_YAW * 180 / Math.PI) % 360;
+            setHud(`Panorama yaw = ${deg.toFixed(0)}° (${PANORAMA_YAW.toFixed(2)} rad)`);
+        }
+
+        // ---------------------------------------------------------------
+        // Controls
+        // ---------------------------------------------------------------
+        function setupControls() {
+            const opacitySlider = document.getElementById('opacity-slider');
+            const opacityVal    = document.getElementById('opacity-val');
+            const scaleSlider   = document.getElementById('scale-slider');
+            const scaleVal      = document.getElementById('scale-val');
+            const blurSlider    = document.getElementById('blur-slider');
+            const blurVal       = document.getElementById('blur-val');
+            const flashSlider   = document.getElementById('flash-slider');
+            const flashVal      = document.getElementById('flash-val');
+
+            blurSlider.addEventListener('input', (e) => {
+                const px = parseFloat(e.target.value);
+                blurVal.textContent = px.toFixed(1).replace(/\.0$/, '') + ' px';
+                setGeckoBlur(px);
+                if (!renderer.xr.isPresenting) {
+                    setHud(`Gecko blur = ${px} px`);
+                }
+            });
+            const cutSlider     = document.getElementById('cutoff-slider');
+            const cutVal        = document.getElementById('cutoff-val');
+            cutSlider.addEventListener('input', (e) => {
+                const t = parseFloat(e.target.value);
+                cutVal.textContent = t.toFixed(0);
+                setGeckoThreshold(t);
+                if (!renderer.xr.isPresenting) {
+                    setHud(`Background cutoff = ${t}`);
+                }
+            });
+            const eyeLeftBtn    = document.getElementById('eye-left');
+            const eyeRightBtn   = document.getElementById('eye-right');
+
+            opacitySlider.addEventListener('input', (e) => {
+                const v = parseFloat(e.target.value);
+                setGeckoOpacity(v);
+                opacityVal.textContent = v.toFixed(2);
+            });
+
+            scaleSlider.addEventListener('input', (e) => {
+                const s = parseFloat(e.target.value);
+                setStimulusScale(s);
+                scaleVal.textContent = s.toFixed(2) + '×';
+            });
+
+            flashSlider.addEventListener('input', (e) => {
+                const hz = parseFloat(e.target.value);
+                flashHz = hz;
+                flashVal.textContent = hz.toFixed(0) + ' Hz';
+                if (!renderer.xr.isPresenting) {
+                    setHud(`Flash rate = ${hz.toFixed(0)} Hz`);
+                }
+            });
+
+            eyeLeftBtn.addEventListener('click', () => {
+                MASK_EYE = 'left';
+                eyeLeftBtn.classList.add('active');
+                eyeRightBtn.classList.remove('active');
+                lastLayerSignature = '';
+                setHud('Mondrian on LEFT eye; gecko blinks on RIGHT');
+            });
+
+            eyeRightBtn.addEventListener('click', () => {
+                MASK_EYE = 'right';
+                eyeRightBtn.classList.add('active');
+                eyeLeftBtn.classList.remove('active');
+                lastLayerSignature = '';
+                setHud('Mondrian on RIGHT eye; gecko blinks on LEFT');
+            });
+        }
+
+        function setGeckoOpacity(v) {
+            currentOpacity = THREE.MathUtils.clamp(v, 0.1, 1.0);
+            geckoMaterial.opacity = currentOpacity;
+            geckoMaterial.needsUpdate = true;
+            if (!renderer.xr.isPresenting) {
+                setHud(`Gecko opacity = ${currentOpacity.toFixed(2)}`);
+            }
+        }
+
+        function setStimulusScale(s) {
+            currentScale = s;
+            currentGeckoW = BASE_GECKO_WIDTH  * s;
+            currentGeckoH = BASE_GECKO_HEIGHT * s;
+
+            if (geckoMesh) {
+                geckoMesh.geometry.dispose();
+                geckoMesh.geometry = new THREE.PlaneGeometry(currentGeckoW, currentGeckoH);
+            }
+            const shadowMesh = geckoGroup.getObjectByName('shadow');
+            if (shadowMesh) {
+                shadowMesh.geometry.dispose();
+                shadowMesh.geometry = new THREE.PlaneGeometry(currentGeckoW, currentGeckoH);
+                shadowMesh.scale.set(1.05, 0.95, 1.0);
+            }
+            refreshMondrian();
+
+            if (!renderer.xr.isPresenting) {
+                setHud(`Stimulus scale = ${s.toFixed(2)}×`);
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Panorama
+        // ---------------------------------------------------------------
+        function loadPanorama() {
+            createPlaceholderPanorama();
+
+            const loader = new THREE.TextureLoader();
+            loader.load(
+                PANORAMA_FILE,
+                (texture) => {
+                    if (panoramaMesh) {
+                        scene.remove(panoramaMesh);
+                        panoramaMesh.geometry.dispose();
+                        if (panoramaMesh.material.map) panoramaMesh.material.map.dispose();
+                        panoramaMesh.material.dispose();
+                    }
+
+                    texture.colorSpace = THREE.SRGBColorSpace;
+                    texture.minFilter = THREE.LinearFilter;
+                    texture.magFilter = THREE.LinearFilter;
+
+                    const geometry = new THREE.SphereGeometry(50, 64, 32);
+                    const material = new THREE.MeshBasicMaterial({
+                        map: texture,
+                        side: THREE.BackSide,
+                        depthWrite: false
+                    });
+
+                    panoramaMesh = new THREE.Mesh(geometry, material);
+                    panoramaMesh.rotation.y = PANORAMA_YAW;
+                    panoramaMesh.layers.set(LAYER_PANORAMA);
+                    panoramaMesh.renderOrder = -1;
+                    scene.add(panoramaMesh);
+
+                    const deg = (PANORAMA_YAW * 180 / Math.PI) % 360;
+                    setHud(`Panorama loaded ✓ (yaw=${deg.toFixed(0)}°)`);
+                },
+                undefined,
+                (err) => {
+                    console.error('[CFS] Panorama load error:', err);
+                    setHud('⚠ Panorama missing — placeholder shown');
+                }
+            );
+        }
+
+        function createPlaceholderPanorama() {
+            const geometry = new THREE.SphereGeometry(50, 32, 16);
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            const gradient = ctx.createLinearGradient(0, 0, 0, 64);
+            gradient.addColorStop(0, '#3a6ea5');
+            gradient.addColorStop(0.5, '#2a4a6a');
+            gradient.addColorStop(1, '#1a2a3a');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 64, 64);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.colorSpace = THREE.SRGBColorSpace;
+
+            const material = new THREE.MeshBasicMaterial({
+                map: texture,
+                side: THREE.BackSide,
+                depthWrite: false
+            });
+
+            panoramaMesh = new THREE.Mesh(geometry, material);
+            panoramaMesh.rotation.y = PANORAMA_YAW;
+            panoramaMesh.layers.set(LAYER_PANORAMA);
+            panoramaMesh.renderOrder = -1;
+            scene.add(panoramaMesh);
+        }
+
+        // ---------------------------------------------------------------
+        // Gecko texture (blurred, light bg → transparent)
+        // ---------------------------------------------------------------
+        function loadGeckoTexture(urls, onReady, onFail) {
+            let index = 0;
+            const tryNext = () => {
+                if (index >= urls.length) { onFail(); return; }
+                const url = urls[index++];
+                const img = new Image();
+                img.onload = () => onReady(makeBlurredTexture(img, geckoBlurPx));
+                img.onerror = () => { console.warn('[CFS] Gecko failed:', url); tryNext(); };
+                img.src = url;
+            };
+            tryNext();
+        }
+
+        function makeBlurredTexture(img, blurPx) {
+            const MAX_DIM = 1024;
+            let w = img.width  || 512;
+            let h = img.height || 384;
+            const scale = Math.min(1, MAX_DIM / Math.max(w, h));
+            w = Math.max(1, Math.round(w * scale));
+            h = Math.max(1, Math.round(h * scale));
+
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, w, h);
+            ctx.drawImage(img, 0, 0, w, h);
+
+            // Keep the original so the cutoff slider can re-cut it live
+            geckoRawCanvas = canvas;
+            geckoUsesFallback = false;
+            geckoSourceCanvas = makeCutoutCanvas(canvas, geckoThreshold);
+            return blurCanvasToTexture(geckoSourceCanvas, blurPx);
+        }
+
+        // Make light pixels (the photo's background) transparent.
+        function makeCutoutCanvas(raw, threshold) {
+            const c = document.createElement('canvas');
+            c.width = raw.width;
+            c.height = raw.height;
+            const ctx = c.getContext('2d');
+            ctx.drawImage(raw, 0, 0);
+            const imageData = ctx.getImageData(0, 0, c.width, c.height);
+            const data = imageData.data;
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i], g = data[i+1], b = data[i+2];
+                const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+                if (lum > threshold) {
+                    data[i+3] = 0;
+                } else if (lum > threshold - 30) {
+                    const alpha = Math.max(0, (lum - (threshold - 30)) / 30);
+                    data[i+3] = Math.floor(255 * (1 - alpha));
+                }
+            }
+            ctx.putImageData(imageData, 0, 0);
+            return c;
+        }
+
+        // Re-cut the background (called by the slider)
+        function setGeckoThreshold(t) {
+            geckoThreshold = t;
+            if (!geckoRawCanvas || geckoUsesFallback) return;
+            geckoSourceCanvas = makeCutoutCanvas(geckoRawCanvas, geckoThreshold);
+            setGeckoBlur(geckoBlurPx);
+        }
+
+        // Blur a source canvas by blurPx and wrap it as a texture.
+        // Same canvas size as the source, so the gecko's size on the plane never changes.
+        function blurCanvasToTexture(src, blurPx) {
+            const blurred = document.createElement('canvas');
+            blurred.width  = src.width;
+            blurred.height = src.height;
+            const bctx = blurred.getContext('2d');
+            bctx.clearRect(0, 0, blurred.width, blurred.height);
+            bctx.filter = blurPx > 0 ? `blur(${blurPx}px)` : 'none';
+            bctx.drawImage(src, 0, 0);
+
+            const tex = new THREE.CanvasTexture(blurred);
+            tex.colorSpace = THREE.SRGBColorSpace;
+            // The gecko covers only a small part of the view, so the texture is heavily
+            // shrunk on screen. Mipmaps + anisotropic filtering keep it smooth instead of blocky.
+            tex.generateMipmaps = true;
+            tex.minFilter = THREE.LinearMipmapLinearFilter;
+            tex.magFilter = THREE.LinearFilter;
+            tex.anisotropy = renderer ? renderer.capabilities.getMaxAnisotropy() : 8;
+            return tex;
+        }
+
+        // Re-apply blur to the current gecko (called by the slider)
+        function setGeckoBlur(px) {
+            geckoBlurPx = px;
+            if (!geckoSourceCanvas || !geckoMaterial) return;
+            const oldTex = geckoMaterial.map;
+            geckoMaterial.map = blurCanvasToTexture(geckoSourceCanvas, geckoBlurPx);
+            geckoMaterial.needsUpdate = true;
+            if (oldTex) oldTex.dispose();
+        }
+
+        function makeFallbackGeckoTexture() {
+            const c = document.createElement('canvas');
+            c.width = 512; c.height = 384;
+            const ctx = c.getContext('2d');
+            ctx.clearRect(0, 0, c.width, c.height);
+
+            ctx.fillStyle = '#b58a3c';
+            ctx.beginPath(); ctx.ellipse(256, 200, 130, 70, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(380, 180, 55, 45, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#111';
+            ctx.beginPath(); ctx.arc(395, 168, 9, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(415, 168, 9, 0, Math.PI * 2); ctx.fill();
+
+            ctx.strokeStyle = '#b58a3c';
+            ctx.lineWidth = 30; ctx.lineCap = 'round';
+            ctx.beginPath(); ctx.moveTo(140, 210); ctx.quadraticCurveTo(60, 260, 90, 320); ctx.stroke();
+
+            ctx.lineWidth = 18;
+            for (const [x, y] of [[190,150],[190,250],[330,150],[330,250]]) {
+                ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 25, y + 35); ctx.stroke();
+            }
+
+            geckoSourceCanvas = c;
+            geckoUsesFallback = true;
+            return blurCanvasToTexture(c, geckoBlurPx);
+        }
+
+        // ---------------------------------------------------------------
+        // Mondrian
+        // ---------------------------------------------------------------
+        function buildMaskPool() {
+            for (let i = 0; i < RECTS_PER_UPDATE_MAX; i++) {
+                const material = new THREE.MeshBasicMaterial({
+                    color: 0xffffff,
+                    side: THREE.DoubleSide,
+                    depthTest: false,
+                    depthWrite: false,
+                    toneMapped: false
+                });
+                const mesh = new THREE.Mesh(maskGeometry, material);
+                mesh.layers.set(LAYER_MASK);
+                mesh.renderOrder = 10;
+                mesh.frustumCulled = false;
+                mesh.visible = false;
+                maskGroup.add(mesh);
+                maskPool.push(mesh);
+            }
+        }
+
+        function refreshMondrian() {
+            const halfW = (currentGeckoW * BASE_MASK_SCALE) / 2;
+            const halfH = (currentGeckoH * BASE_MASK_SCALE) / 2;
+            const target = RECTS_PER_UPDATE_MIN +
+                Math.floor(Math.random() * (RECTS_PER_UPDATE_MAX - RECTS_PER_UPDATE_MIN + 1));
+            const rects = subdivideRect(
+                { x0: -halfW, y0: -halfH, x1: halfW, y1: halfH },
+                target
+            );
+            for (let i = 0; i < maskPool.length; i++) {
+                const mesh = maskPool[i];
+                if (i >= rects.length) { mesh.visible = false; continue; }
+                const r = rects[i];
+                const w = r.x1 - r.x0;
+                const h = r.y1 - r.y0;
+                mesh.visible = true;
+                mesh.scale.set(w, h, 1);
+                mesh.position.set((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, 0.001);
+                pickMondrianColor(mesh.material.color);
+            }
+        }
+
+        function subdivideRect(rect, count) {
+            const rects = [rect];
+            while (rects.length < count) {
+                let bestIndex = 0, bestArea = -1;
+                for (let i = 0; i < rects.length; i++) {
+                    const r = rects[i];
+                    const area = (r.x1 - r.x0) * (r.y1 - r.y0);
+                    if (area > bestArea) { bestArea = area; bestIndex = i; }
+                }
+                const r = rects[bestIndex];
+                const w = r.x1 - r.x0;
+                const h = r.y1 - r.y0;
+                const t = 0.25 + Math.random() * 0.5;
+                if (w >= h) {
+                    const xm = r.x0 + w * t;
+                    rects[bestIndex] = { x0: r.x0, y0: r.y0, x1: xm, y1: r.y1 };
+                    rects.push({ x0: xm, y0: r.y0, x1: r.x1, y1: r.y1 });
+                } else {
+                    const ym = r.y0 + h * t;
+                    rects[bestIndex] = { x0: r.x0, y0: r.y0, x1: r.x1, y1: ym };
+                    rects.push({ x0: r.x0, y0: ym, x1: r.x1, y1: r.y1 });
+                }
+            }
+            return rects;
+        }
+
+        function pickMondrianColor(target) {
+            let r = Math.random();
+            for (const entry of MONDRIAN_COLORS) {
+                r -= entry.weight;
+                if (r <= 0) { target.copy(entry.color); return; }
+            }
+            target.copy(MONDRIAN_COLORS[0].color);
+        }
+
+        // ---------------------------------------------------------------
+        // XR lifecycle
+        // ---------------------------------------------------------------
+        function onEnterVR() {
+            if (!('xr' in navigator)) return;
+            navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] })
+                .then((session) => renderer.xr.setSession(session))
+                .catch((err) => setHud('XR failed: ' + err.message));
+        }
+
+        function onXRSessionStart() {
+            vrButton.style.display = 'none';
+            lastFrameTime = 0;
+            flashAccumulator = 0;
+            lastLayerSignature = '';
+            geckoTimer = 0;
+            geckoVisible = true;
+            setHud(`XR active — Mondrian always on; gecko blinks ${GECKO_ON_SECONDS}s on / ${GECKO_OFF_SECONDS}s off`);
+        }
+
+        function onXRSessionEnd() {
+            vrButton.style.display = 'inline-block';
+            lastFrameTime = 0;
+            flashAccumulator = 0;
+            setHud('XR session ended.');
+        }
+
+        // ---------------------------------------------------------------
+        // Per-eye layer assignment
+        // ---------------------------------------------------------------
+        function ensureXRLayers() {
+            const xrCamera = renderer.xr.getCamera();
+            if (!xrCamera || !xrCamera.cameras || xrCamera.cameras.length < 2) return;
+
+            const camA = xrCamera.cameras[0];
+            const camB = xrCamera.cameras[1];
+            const leftCam  = SWAP_EYES ? camB : camA;
+            const rightCam = SWAP_EYES ? camA : camB;
+
+            const maskIsLeft = (MASK_EYE === 'left');
+
+            const leftLayers  = [LAYER_PANORAMA];
+            const rightLayers = [LAYER_PANORAMA];
+
+            if (maskIsLeft) {
+                leftLayers.push(LAYER_MASK);
+                if (geckoVisible) rightLayers.push(LAYER_GECKO);
+            } else {
+                rightLayers.push(LAYER_MASK);
+                if (geckoVisible) leftLayers.push(LAYER_GECKO);
+            }
+
+            leftCam.layers.disableAll();
+            for (const l of leftLayers) leftCam.layers.enable(l);
+
+            rightCam.layers.disableAll();
+            for (const l of rightLayers) rightCam.layers.enable(l);
+
+            const signature = `${leftLayers.join(',')}|${rightLayers.join(',')}`;
+            if (signature !== lastLayerSignature) {
+                lastLayerSignature = signature;
+                console.log('[CFS] L:', leftLayers, '| R:', rightLayers, '| geckoVisible:', geckoVisible);
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Render loop
+        // ---------------------------------------------------------------
+        function render(time) {
+            if (lastFrameTime === 0) lastFrameTime = time;
+            const delta = Math.min(time - lastFrameTime, 250);
+            lastFrameTime = time;
+
+            // Gecko blink timer
+            geckoTimer += delta;
+            const phaseMs = (geckoVisible ? GECKO_ON_SECONDS : GECKO_OFF_SECONDS) * 1000;
+            if (geckoTimer >= phaseMs) {
+                geckoTimer = 0;
+                geckoVisible = !geckoVisible;
+                lastLayerSignature = '';
+            }
+
+            // Mondrian flash
+            const interval = 1000 / flashHz;
+            flashAccumulator += delta;
+            if (flashAccumulator >= interval) {
+                flashAccumulator = 0;
+                refreshMondrian();
+            }
+
+            if (renderer.xr.isPresenting) {
+                ensureXRLayers();
+            } else {
+                camera.layers.disableAll();
+                camera.layers.enable(LAYER_PANORAMA);
+                camera.layers.enable(LAYER_MASK);
+                if (geckoVisible) camera.layers.enable(LAYER_GECKO);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // ---------------------------------------------------------------
+        // Resize / HUD
+        // ---------------------------------------------------------------
+        function onResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function setHud(msg) {
+            if (hud) hud.textContent = 'Status: ' + msg;
+            console.log('[CFS] ' + msg);
+        }
+    </script>
+</body>
+</html>
