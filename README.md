@@ -26,27 +26,18 @@ If `panorama.jpg` is missing, a blue gradient placeholder is shown. If no gecko 
 
 three.js is loaded from the unpkg CDN, so an internet connection is needed.
 
-## Running it
+## Running it on the Meta Quest 3
 
-WebXR needs a secure context (HTTPS, or `localhost`), and the page uses ES modules, so it cannot be opened directly from a `file://` path.
-
-**Option 1: GitHub Pages (easiest for the Quest)**
+This project is made for the **Meta Quest 3** and runs in the Meta Quest Browser. WebXR needs HTTPS, so the easiest way to host it is GitHub Pages.
 
 1. Push `index.html`, `panorama.jpg` and the gecko image to your repository.
 2. In the repository, go to **Settings → Pages** and publish from your branch.
-3. Open the Pages URL in the **Meta Quest Browser** and click **ENTER VR EXPERIMENT**.
-
-**Option 2: Local server for desktop testing**
-
-```bash
-python3 -m http.server 8000
-```
-
-Then open `http://localhost:8000` in a desktop browser. You can preview the scene there, but the eye separation only applies inside a VR session.
+3. Put on the Quest 3 and open the Pages URL in the **Meta Quest Browser**.
+4. Set the controls (see below), then click **ENTER VR EXPERIMENT**.
 
 ## Controls
 
-The control panel is on the web page, so set the values **before** entering VR.
+The control panel is on the web page in the Quest Browser, so set the values **before** entering VR. Point and click with the controllers.
 
 | Control | Default | Range |
 |---|---|---|
@@ -57,7 +48,7 @@ The control panel is on the web page, so set the values **before** entering VR.
 | Flash rate (mask refresh) | 6 Hz | 1–20 Hz |
 | Dominant eye (mask) | Left | Left / Right |
 
-Keyboard: press `[` and `]` to rotate the panorama in 45° steps (useful for choosing the start direction).
+Optional: with a Bluetooth keyboard connected to the Quest, press `[` and `]` to rotate the panorama in 45° steps (useful for choosing the start direction).
 
 ## Specifications
 
@@ -83,7 +74,7 @@ Keyboard: press `[` and `]` to rotate the panorama in 45° steps (useful for cho
 
 ## Limitations
 
-- The sliders are on the desktop page, so they must be set before entering VR.
+- The sliders are on the web page, so they must be set before entering VR.
 - The mask refreshes once per rendered frame, so the true flash rate is tied to the headset's refresh rate (72/90/120 Hz).
 - The default flash rate (6 Hz) is lower than the roughly 10 Hz usually used in CFS studies. Set it to 10 Hz to match the standard.
 - The gecko switches on and off abruptly at a fixed opacity rather than ramping its contrast.
